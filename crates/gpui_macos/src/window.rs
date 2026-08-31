@@ -522,44 +522,77 @@ fn fullscreen_presentation_options(
 struct SimpleFullscreenState {
     frame: NSRect,
     style_mask: NSWindowStyleMask,
+    keep_menu_bar_visible: bool,
 }
 
 enum SimpleFullscreenPlan {
-    Enter { screen_frame: NSRect },
+    Enter {
+        screen_frame: NSRect,
+        keep_menu_bar_visible: bool,
+    },
     Exit(SimpleFullscreenState),
 }
 
 struct SimpleFullscreenAppState {
     window_count: usize,
+    keep_menu_bar_visible_window_count: usize,
     saved_presentation_options: NSUInteger,
 }
 
 static SIMPLE_FULLSCREEN_APP_STATE: Mutex<Option<SimpleFullscreenAppState>> = Mutex::new(None);
 
-unsafe fn push_simple_fullscreen_presentation_options() {
+fn simple_fullscreen_presentation_options(keep_menu_bar_visible: bool) -> NSUInteger {
+    let mut options = NS_APPLICATION_PRESENTATION_AUTO_HIDE_DOCK;
+    if !keep_menu_bar_visible {
+        options |= NS_APPLICATION_PRESENTATION_AUTO_HIDE_MENU_BAR;
+    }
+    options
+}
+
+unsafe fn set_simple_fullscreen_presentation_options(keep_menu_bar_visible: bool) {
+    unsafe {
+        let app = NSApplication::sharedApplication(nil);
+        let _: () = msg_send![
+            app,
+            setPresentationOptions: simple_fullscreen_presentation_options(keep_menu_bar_visible)
+        ];
+    }
+}
+
+unsafe fn push_simple_fullscreen_presentation_options(keep_menu_bar_visible: bool) {
     let mut app_state = SIMPLE_FULLSCREEN_APP_STATE.lock();
     match app_state.as_mut() {
-        Some(app_state) => app_state.window_count += 1,
+        Some(app_state) => {
+            let was_keeping_menu_bar_visible = app_state.keep_menu_bar_visible_window_count > 0;
+            app_state.window_count += 1;
+            if keep_menu_bar_visible {
+                app_state.keep_menu_bar_visible_window_count += 1;
+                if !was_keeping_menu_bar_visible {
+                    unsafe { set_simple_fullscreen_presentation_options(true) };
+                }
+            }
+        }
         None => unsafe {
             let app = NSApplication::sharedApplication(nil);
             let saved_presentation_options: NSUInteger = msg_send![app, presentationOptions];
-            let _: () = msg_send![
-                app,
-                setPresentationOptions: NS_APPLICATION_PRESENTATION_AUTO_HIDE_DOCK
-                    | NS_APPLICATION_PRESENTATION_AUTO_HIDE_MENU_BAR
-            ];
+            set_simple_fullscreen_presentation_options(keep_menu_bar_visible);
             *app_state = Some(SimpleFullscreenAppState {
                 window_count: 1,
+                keep_menu_bar_visible_window_count: usize::from(keep_menu_bar_visible),
                 saved_presentation_options,
             });
         },
     }
 }
 
-unsafe fn pop_simple_fullscreen_presentation_options() {
+unsafe fn pop_simple_fullscreen_presentation_options(keep_menu_bar_visible: bool) {
     let mut app_state = SIMPLE_FULLSCREEN_APP_STATE.lock();
     if let Some(state) = app_state.as_mut() {
         state.window_count = state.window_count.saturating_sub(1);
+        if keep_menu_bar_visible {
+            state.keep_menu_bar_visible_window_count =
+                state.keep_menu_bar_visible_window_count.saturating_sub(1);
+        }
         if state.window_count == 0 {
             unsafe {
                 let app = NSApplication::sharedApplication(nil);
@@ -569,6 +602,8 @@ unsafe fn pop_simple_fullscreen_presentation_options() {
                 ];
             }
             *app_state = None;
+        } else if keep_menu_bar_visible && state.keep_menu_bar_visible_window_count == 0 {
+            unsafe { set_simple_fullscreen_presentation_options(false) };
         }
     }
 }
@@ -581,12 +616,15 @@ unsafe fn apply_simple_fullscreen_plan(
     unsafe {
         match plan {
             SimpleFullscreenPlan::Exit(saved) => {
-                pop_simple_fullscreen_presentation_options();
+                pop_simple_fullscreen_presentation_options(saved.keep_menu_bar_visible);
                 native_window.setStyleMask_(saved.style_mask);
                 native_window.setFrame_display_(saved.frame, YES);
             }
-            SimpleFullscreenPlan::Enter { screen_frame } => {
-                push_simple_fullscreen_presentation_options();
+            SimpleFullscreenPlan::Enter {
+                screen_frame,
+                keep_menu_bar_visible,
+            } => {
+                push_simple_fullscreen_presentation_options(keep_menu_bar_visible);
                 native_window.setStyleMask_(NSWindowStyleMask::NSBorderlessWindowMask);
                 native_window.setFrame_display_(screen_frame, YES);
             }
@@ -839,9 +877,13 @@ impl MacWindowState {
             self.simple_fullscreen_state = Some(SimpleFullscreenState {
                 frame: unsafe { NSWindow::frame(self.native_window) },
                 style_mask: unsafe { self.native_window.styleMask() },
+                keep_menu_bar_visible: self.keep_menu_bar_visible_in_fullscreen,
             });
 
-            Some(SimpleFullscreenPlan::Enter { screen_frame })
+            Some(SimpleFullscreenPlan::Enter {
+                screen_frame,
+                keep_menu_bar_visible: self.keep_menu_bar_visible_in_fullscreen,
+            })
         }
     }
 
@@ -2945,8 +2987,10 @@ extern "C" fn close_window(this: &Object, _: Sel) {
             )
         };
 
-        if simple_fullscreen_state.is_some() {
-            pop_simple_fullscreen_presentation_options();
+        if let Some(simple_fullscreen_state) = simple_fullscreen_state {
+            pop_simple_fullscreen_presentation_options(
+                simple_fullscreen_state.keep_menu_bar_visible,
+            );
         }
 
         if let Some(callback) = close_callback {
@@ -3632,6 +3676,23 @@ mod tests {
         assert_eq!(
             fullscreen_presentation_options(proposed_options, false),
             proposed_options
+        );
+    }
+
+    #[test]
+    fn simple_fullscreen_presentation_options_keeps_the_menu_bar_when_requested() {
+        assert_eq!(
+            simple_fullscreen_presentation_options(true),
+            NS_APPLICATION_PRESENTATION_AUTO_HIDE_DOCK
+        );
+    }
+
+    #[test]
+    fn simple_fullscreen_presentation_options_preserves_gpui_default_behavior() {
+        assert_eq!(
+            simple_fullscreen_presentation_options(false),
+            NS_APPLICATION_PRESENTATION_AUTO_HIDE_DOCK
+                | NS_APPLICATION_PRESENTATION_AUTO_HIDE_MENU_BAR
         );
     }
 }
