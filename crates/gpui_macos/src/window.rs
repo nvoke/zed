@@ -505,13 +505,16 @@ struct TrafficLightButtons {
 // `NSApplicationPresentationOptions` bits (see `NSApplication.PresentationOptions`).
 const NS_APPLICATION_PRESENTATION_AUTO_HIDE_DOCK: NSUInteger = 1 << 0;
 const NS_APPLICATION_PRESENTATION_AUTO_HIDE_MENU_BAR: NSUInteger = 1 << 2;
+const NS_APPLICATION_PRESENTATION_HIDE_MENU_BAR: NSUInteger = 1 << 3;
 
 fn fullscreen_presentation_options(
     proposed_options: NSUInteger,
     keep_menu_bar_visible: bool,
 ) -> NSUInteger {
     if keep_menu_bar_visible {
-        proposed_options & !NS_APPLICATION_PRESENTATION_AUTO_HIDE_MENU_BAR
+        proposed_options
+            & !(NS_APPLICATION_PRESENTATION_AUTO_HIDE_MENU_BAR
+                | NS_APPLICATION_PRESENTATION_HIDE_MENU_BAR)
     } else {
         proposed_options
     }
@@ -3665,6 +3668,17 @@ mod tests {
         assert_eq!(
             fullscreen_presentation_options(proposed_options, true),
             NS_APPLICATION_PRESENTATION_AUTO_HIDE_DOCK
+        );
+    }
+
+    #[test]
+    fn fullscreen_presentation_options_keeps_the_menu_bar_when_mac_os_hides_it() {
+        // Native fullscreen on macOS proposes FullScreen | HideDock | HideMenuBar.
+        let proposed_options = (1 << 10) | (1 << 1) | (1 << 3);
+
+        assert_eq!(
+            fullscreen_presentation_options(proposed_options, true),
+            (1 << 10) | (1 << 1)
         );
     }
 
