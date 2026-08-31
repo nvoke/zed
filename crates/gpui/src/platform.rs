@@ -1831,9 +1831,10 @@ pub struct WindowOptions {
     /// Leave this `false` for windows that rely on AppKit's native titlebar dragging.
     pub app_owns_titlebar_drag: bool,
 
-    /// Whether macOS native fullscreen should keep the menu bar visible.
+    /// Whether macOS fullscreen should keep the menu bar visible.
     ///
-    /// Other platforms ignore this option.
+    /// This applies to both native and simple (borderless) fullscreen. Other platforms
+    /// ignore this option.
     pub keep_menu_bar_visible_in_fullscreen: bool,
 
     /// The minimum interval between animation frames while the window is inactive.
@@ -1903,7 +1904,7 @@ pub struct WindowParams {
     )]
     pub app_owns_titlebar_drag: bool,
 
-    /// Whether macOS native fullscreen should keep the menu bar visible.
+    /// Whether macOS fullscreen should keep the menu bar visible.
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub keep_menu_bar_visible_in_fullscreen: bool,
 
