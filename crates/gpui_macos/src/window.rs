@@ -388,6 +388,11 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
             window_will_enter_fullscreen as extern "C" fn(&Object, Sel, id),
         );
         decl.add_method(
+            sel!(window:willUseFullScreenPresentationOptions:),
+            window_will_use_fullscreen_presentation_options
+                as extern "C" fn(&Object, Sel, id, NSUInteger) -> NSUInteger,
+        );
+        decl.add_method(
             sel!(windowWillExitFullScreen:),
             window_will_exit_fullscreen as extern "C" fn(&Object, Sel, id),
         );
@@ -500,6 +505,17 @@ struct TrafficLightButtons {
 // `NSApplicationPresentationOptions` bits (see `NSApplication.PresentationOptions`).
 const NS_APPLICATION_PRESENTATION_AUTO_HIDE_DOCK: NSUInteger = 1 << 0;
 const NS_APPLICATION_PRESENTATION_AUTO_HIDE_MENU_BAR: NSUInteger = 1 << 2;
+
+fn fullscreen_presentation_options(
+    proposed_options: NSUInteger,
+    keep_menu_bar_visible: bool,
+) -> NSUInteger {
+    if keep_menu_bar_visible {
+        proposed_options & !NS_APPLICATION_PRESENTATION_AUTO_HIDE_MENU_BAR
+    } else {
+        proposed_options
+    }
+}
 
 // State captured when entering simple (borderless) fullscreen, used to restore
 // the window on exit.
@@ -622,6 +638,7 @@ struct MacWindowState {
     // the titlebar or delay titlebar clicks (a delay first observed on macOS 27). Such
     // windows draw their own titlebar and move the window via `start_window_move`.
     app_owns_titlebar_drag: bool,
+    keep_menu_bar_visible_in_fullscreen: bool,
     fullscreen_restore_bounds: Bounds<Pixels>,
     simple_fullscreen_state: Option<SimpleFullscreenState>,
     move_tab_to_new_window_callback: Option<Box<dyn FnMut()>>,
@@ -884,6 +901,7 @@ impl MacWindow {
             kind,
             is_movable,
             app_owns_titlebar_drag,
+            keep_menu_bar_visible_in_fullscreen,
             is_resizable,
             is_minimizable,
             focus,
@@ -1049,6 +1067,7 @@ impl MacWindow {
                 external_files_dragged: false,
                 first_mouse: false,
                 app_owns_titlebar_drag,
+                keep_menu_bar_visible_in_fullscreen,
                 fullscreen_restore_bounds: Bounds::default(),
                 simple_fullscreen_state: None,
                 move_tab_to_new_window_callback: None,
@@ -2735,6 +2754,22 @@ extern "C" fn window_will_enter_fullscreen(this: &Object, _: Sel, _: id) {
     }
 }
 
+extern "C" fn window_will_use_fullscreen_presentation_options(
+    this: &Object,
+    _: Sel,
+    _: id,
+    proposed_options: NSUInteger,
+) -> NSUInteger {
+    let window_state = unsafe { get_window_state(this) };
+    fullscreen_presentation_options(
+        proposed_options,
+        window_state
+            .as_ref()
+            .lock()
+            .keep_menu_bar_visible_in_fullscreen,
+    )
+}
+
 extern "C" fn window_will_exit_fullscreen(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     let lock = window_state.as_ref().lock();
@@ -3576,5 +3611,27 @@ mod tests {
     #[test]
     fn display_id_for_screen_returns_none_for_null_screen() {
         assert_eq!(display_id_for_screen(nil), None);
+    }
+
+    #[test]
+    fn fullscreen_presentation_options_keeps_the_menu_bar_when_requested() {
+        let proposed_options = NS_APPLICATION_PRESENTATION_AUTO_HIDE_DOCK
+            | NS_APPLICATION_PRESENTATION_AUTO_HIDE_MENU_BAR;
+
+        assert_eq!(
+            fullscreen_presentation_options(proposed_options, true),
+            NS_APPLICATION_PRESENTATION_AUTO_HIDE_DOCK
+        );
+    }
+
+    #[test]
+    fn fullscreen_presentation_options_preserves_gpui_default_behavior() {
+        let proposed_options = NS_APPLICATION_PRESENTATION_AUTO_HIDE_DOCK
+            | NS_APPLICATION_PRESENTATION_AUTO_HIDE_MENU_BAR;
+
+        assert_eq!(
+            fullscreen_presentation_options(proposed_options, false),
+            proposed_options
+        );
     }
 }

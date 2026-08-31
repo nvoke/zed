@@ -1831,6 +1831,11 @@ pub struct WindowOptions {
     /// Leave this `false` for windows that rely on AppKit's native titlebar dragging.
     pub app_owns_titlebar_drag: bool,
 
+    /// Whether macOS native fullscreen should keep the menu bar visible.
+    ///
+    /// Other platforms ignore this option.
+    pub keep_menu_bar_visible_in_fullscreen: bool,
+
     /// The minimum interval between animation frames while the window is inactive.
     ///
     /// Set to `None` to disable inactive-window animation frame throttling.
@@ -1897,6 +1902,10 @@ pub struct WindowParams {
         allow(dead_code)
     )]
     pub app_owns_titlebar_drag: bool,
+
+    /// Whether macOS native fullscreen should keep the menu bar visible.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub keep_menu_bar_visible_in_fullscreen: bool,
 
     /// Whether the window should be resizable by the user
     #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
@@ -1980,6 +1989,7 @@ impl Default for WindowOptions {
             kind: WindowKind::Normal,
             is_movable: true,
             app_owns_titlebar_drag: false,
+            keep_menu_bar_visible_in_fullscreen: false,
             inactive_frame_interval: Some(Duration::from_micros(33_333)),
             is_resizable: true,
             is_minimizable: true,
